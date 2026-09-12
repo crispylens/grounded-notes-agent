@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Chats</h1>
+        <button id="new-chat-btn" type="button" title="New chat">+</button>
+      </div>
+      <ul id="chat-list" class="chat-list"></ul>
+    </aside>
+
+    <main class="chat-panel">
+      <header class="chat-header">
+        <h2 id="chat-title">New chat</h2>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <form id="chat-form" class="composer">
+        <textarea
+          id="message-input"
+          rows="1"
+          placeholder="Send a message..."
+          autocomplete="off"
+        ></textarea>
+        <button id="send-btn" type="submit">Send</button>
+      </form>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

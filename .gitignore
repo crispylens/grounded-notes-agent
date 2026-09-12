@@ -1,0 +1,10 @@
+.env
+.env.local
+.env.*.local
+.cursor/mcp.json
+__pycache__/
+*.py[cod]
+node_modules/
+.next/
+out/
+dist/
