@@ -9,14 +9,17 @@ from pathlib import Path
 
 from contextlib import asynccontextmanager
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from openai import OpenAI
 from pydantic import BaseModel
 
-load_dotenv()
+from rag.notes_config import get_api_key as resolve_api_key
+from rag.notes_config import load_app_env
+from rag.notes_retriever import query_my_notes
+
+load_app_env()
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8000
@@ -44,7 +47,7 @@ BASE_URL = "https://space.ai-builders.com/backend/v1"
 SEARCH_URL = f"{BASE_URL}/search/"
 DEFAULT_MODEL = "gpt-5"
 TOOL_CALL_TEST_MODEL = "gpt-5"
-MAX_TURNS = 3
+MAX_TURNS = 6
 MAX_PAGE_TEXT_CHARS = 15000
 FETCH_TIMEOUT_SECONDS = 30
 USER_AGENT = "Mozilla/5.0 (compatible; AIBuilderAgent/1.0)"
@@ -91,13 +94,81 @@ READ_PAGE_TOOL = {
     },
 }
 
-AGENT_TOOLS = [WEB_SEARCH_TOOL, READ_PAGE_TOOL]
+QUERY_MY_NOTES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "query_my_notes",
+        "description": (
+            "Search the user's personal Markdown notes (indexed local knowledge base). "
+            "Use for questions about their projects, travel, side businesses, communities, "
+            "accounts, posts, attitudes, goals, and anything that might be in their notes. "
+            "Craft focused queries with names, places, and keywords; call multiple times "
+            "with refined queries if the first results are insufficient. "
+            "When the user asserts interest in corporate promotion or climbing the ladder at "
+            "a big company, also search for documented skeptical views (e.g. side business, "
+            "corporate as a cage) before you conclude. For other new topics, search the topic "
+            "itself; do not pull unrelated goal docs unless the user asks how it fits their "
+            "overall goals."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Semantic search query over personal notes.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Number of chunks to return (default 5).",
+                },
+                "folder_path": {
+                    "type": "string",
+                    "description": (
+                        "Optional folder prefix under Documents/AI (e.g. 'AE' or 'Etsy') "
+                        "to restrict hits to that directory when the user names a folder."
+                    ),
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+AGENT_TOOLS = [QUERY_MY_NOTES_TOOL, WEB_SEARCH_TOOL, READ_PAGE_TOOL]
+
+AGENT_SYSTEM_PROMPT = (
+    "You are a helpful assistant with access to the user's personal note library via "
+    "the query_my_notes tool. Treat that tool as a research assistant over their "
+    "indexed Markdown files. When a question might be answered from their notes "
+    "(past projects, travel, side hustles, communities, usernames, posts, meetings, "
+    "quant experiments, career attitudes, etc.), you MUST search with query_my_notes "
+    "first—often with several targeted queries—and refine queries based on prior hits. "
+    "Answer only from retrieved note content for those topics; if nothing relevant "
+    "is found, say so clearly instead of inventing facts. When the user names a "
+    "specific folder (e.g. /AE), pass folder_path to query_my_notes and base your "
+    "answer only on hits from that folder—not other directories that mention the "
+    "same keyword.\n\n"
+    "Premise checking (same topic only): The user may embed false assumptions about a "
+    "topic that your notes already discuss (e.g. 'you see I want a Google promotion' "
+    "while notes say corporate promotion feels like a cage). Search that topic, compare "
+    "to the user's framing, and if notes contradict on the same subject, correct them "
+    "and cite paths from tool output—without long playbooks for the rejected premise.\n\n"
+    "Missing from notes: If searches return no chunks about the user's new topic (e.g. "
+    "national park ranger), say clearly that your notes do not mention it. Do not "
+    "stretch unrelated files (personal_goal, problem.md) into an answer unless the user "
+    "explicitly asks whether the new idea fits their documented long-term goals. Then "
+    "you may briefly relate only what they asked. For factual how-to on topics absent "
+    "from notes, you may use web_search or give short general guidance and label it as "
+    "not from their notes.\n\n"
+    "Use web_search and read_page only for public, up-to-date information not in notes."
+)
+
 
 def _get_api_key() -> str:
-    api_key = os.getenv("SUPER_MIND_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="SUPER_MIND_API_KEY not configured")
-    return api_key
+    try:
+        return resolve_api_key()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def get_client() -> OpenAI:
@@ -208,6 +279,8 @@ def _agent_log(message: str) -> None:
 
 
 def _tool_display_name(tool_name: str) -> str:
+    if tool_name == "query_my_notes":
+        return "notes"
     if tool_name == "web_search":
         return "search"
     if tool_name == "read_page":
@@ -222,6 +295,20 @@ def _execute_tool_call(tool_call) -> str:
         return json.dumps({"error": f"Invalid tool arguments: {exc}"})
 
     try:
+        if tool_call.function.name == "query_my_notes":
+            top_k = arguments.get("top_k", 5)
+            if not isinstance(top_k, int):
+                top_k = 5
+            folder_path = arguments.get("folder_path")
+            if folder_path is not None and not isinstance(folder_path, str):
+                folder_path = None
+            return json.dumps(
+                query_my_notes(
+                    arguments["query"],
+                    top_k=top_k,
+                    folder_path=folder_path,
+                )
+            )
         if tool_call.function.name == "web_search":
             return json.dumps(web_search(arguments["query"]))
         if tool_call.function.name == "read_page":
@@ -243,7 +330,10 @@ def _truncate_for_log(text: str, limit: int = 500) -> str:
 
 
 def run_agent_chat(client: OpenAI, model: str, user_message: str) -> str:
-    messages: list[dict] = [{"role": "user", "content": user_message}]
+    messages: list[dict] = [
+        {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
 
     for turn in range(1, MAX_TURNS + 1):
         response = client.chat.completions.create(
