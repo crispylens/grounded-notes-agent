@@ -1,4 +1,4 @@
-# ai-architecture
+# grounded-notes-agent
 
 面向个人笔记的 **本地优先 RAG + Agent**：在磁盘上索引 Markdown 与纯文本，用 FAISS 做向量检索，通过 FastAPI 网页/API 对话，Agent 可自主调用 `query_my_notes` 查你的知识库。
 
@@ -16,7 +16,7 @@
 ## 安装
 
 ```bash
-cd ai-architecture
+cd grounded-notes-agent
 python -m venv .venv
 .venv\Scripts\activate   # Windows
 pip install -r requirements.txt

@@ -1,4 +1,4 @@
-# ai-architecture
+# grounded-notes-agent
 
 Local-first **RAG + agent** over your personal notes: index Markdown and plain-text files on disk, search with FAISS, and chat through a FastAPI app that calls `query_my_notes` as an agent tool.
 
@@ -16,7 +16,7 @@ Local-first **RAG + agent** over your personal notes: index Markdown and plain-t
 ## Setup
 
 ```bash
-cd ai-architecture
+cd grounded-notes-agent
 python -m venv .venv
 .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
